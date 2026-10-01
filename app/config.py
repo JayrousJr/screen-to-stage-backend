@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     dhis2_token: str = ""
     database_path: Path = Path("./data/screen_to_stage.db")
     image_dir: Path = Path("./data/images")
+    inference_timeout_seconds: float = 300.0
 
 
 settings = Settings()
