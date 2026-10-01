@@ -5,7 +5,7 @@ from app.services import inference
 
 
 def test_health_ok_when_model_installed(client, monkeypatch):
-    monkeypatch.setattr(settings, "ollama_model", "medgemma")
+    monkeypatch.setattr(settings, "ollama_model", "medgemma:4b")
     monkeypatch.setattr(inference, "installed_models", lambda: ["medgemma:4b"])
 
     response = client.get("/api/health")
@@ -15,7 +15,7 @@ def test_health_ok_when_model_installed(client, monkeypatch):
         "status": "ok",
         "ollama_reachable": True,
         "model_available": True,
-        "model": "medgemma",
+        "model": "medgemma:4b",
     }
 
 
@@ -41,7 +41,10 @@ def test_health_degraded_when_ollama_unreachable(client, monkeypatch):
 
 def test_startup_creates_schema(client):
     conn = sqlite3.connect(settings.database_path)
-    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    tables = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
     conn.close()
 
     assert {"scans", "results", "sync_queue"} <= tables
