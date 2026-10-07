@@ -21,7 +21,7 @@ def analyze(request: AnalyzeRequest, db: sqlite3.Connection = Depends(get_db)) -
     try:
         image_path = images.store(request.image, scan_id)
     except images.InvalidImage as exc:
-        raise ApiError(422, "invalid_image", str(exc))
+        raise ApiError(422, exc.error, str(exc) or None)
 
     with db:
         db.execute(

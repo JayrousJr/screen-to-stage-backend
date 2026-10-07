@@ -1,8 +1,12 @@
 import base64
 from io import BytesIO
 
+import numpy as np
 import pytest
 from PIL import Image
+from pydicom.dataset import Dataset, FileMetaDataset
+from pydicom.encaps import encapsulate
+from pydicom.uid import ExplicitVRLittleEndian, JPEG2000Lossless, generate_uid
 
 from app.models.xray import ImageCheck, ModelFindings
 from app.services import images, inference, worker
@@ -15,6 +19,35 @@ ABNORMAL = ModelFindings(
     confidence="high",
 )
 UNSURE = ModelFindings(findings=["Clear lung fields"], flagged_regions=[], abnormal=False, confidence="low")
+
+
+def dicom(pixels, photometric="MONOCHROME2", view="PA", transfer_syntax=ExplicitVRLittleEndian, **extra):
+    meta = FileMetaDataset()
+    meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.1.1"
+    meta.MediaStorageSOPInstanceUID = generate_uid()
+    meta.TransferSyntaxUID = transfer_syntax
+    dataset = Dataset()
+    dataset.file_meta = meta
+    dataset.SOPClassUID = meta.MediaStorageSOPClassUID
+    dataset.SOPInstanceUID = meta.MediaStorageSOPInstanceUID
+    dataset.Modality = "DX"
+    dataset.ViewPosition = view
+    dataset.Rows, dataset.Columns = pixels.shape
+    dataset.SamplesPerPixel = 1
+    dataset.PhotometricInterpretation = photometric
+    dataset.BitsAllocated = 16
+    dataset.BitsStored = 12
+    dataset.HighBit = 11
+    dataset.PixelRepresentation = 0
+    if transfer_syntax.is_compressed:
+        dataset.PixelData = encapsulate([b"not a jpeg 2000 frame"])
+    else:
+        dataset.PixelData = pixels.astype(np.uint16).tobytes()
+    for name, value in extra.items():
+        setattr(dataset, name, value)
+    buffer = BytesIO()
+    dataset.save_as(buffer, enforce_file_format=True)
+    return base64.b64encode(buffer.getvalue()).decode()
 
 
 def analyze_returns(monkeypatch, output):
@@ -199,6 +232,51 @@ def test_chest_xray_is_read_after_check(tmp_path, monkeypatch):
     monkeypatch.setattr(inference, "ask", lambda image, prompt, schema: replies[schema])
 
     assert inference.analyze(image_path) == NORMAL
+
+
+def test_dicom_is_accepted(submit):
+    assert submit(dicom(np.full((64, 64), 2000))).status_code == 202
+
+
+def test_dicom_keeps_its_contrast():
+    image = images.decode(dicom(np.array([[1000, 3000]])))
+
+    assert image.getpixel((0, 0)) == (0, 0, 0)
+    assert image.getpixel((1, 0)) == (255, 255, 255)
+
+
+def test_inverted_dicom_is_shown_bones_white():
+    image = images.decode(dicom(np.array([[1000, 3000]]), photometric="MONOCHROME1"))
+
+    assert image.getpixel((0, 0)) == (255, 255, 255)
+    assert image.getpixel((1, 0)) == (0, 0, 0)
+
+
+def test_dicom_window_is_applied():
+    image = images.decode(dicom(np.array([[0, 1500, 4000]]), WindowCenter=1500, WindowWidth=1000))
+
+    assert image.getpixel((0, 0)) == (0, 0, 0)
+    assert image.getpixel((2, 0)) == (255, 255, 255)
+
+
+@pytest.mark.parametrize("view", ["LL", "RL"])
+def test_side_view_dicom_returns_422(submit, db, view):
+    response = submit(dicom(np.full((64, 64), 2000), view=view))
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "error": "not_frontal_view",
+        "message": "This looks like a side view. Please upload the front (PA) view of the chest.",
+    }
+    assert db.execute("SELECT COUNT(*) FROM scans").fetchone()[0] == 0
+
+
+def test_unreadable_dicom_returns_422(submit):
+    response = submit(dicom(np.full((8, 8), 2000), transfer_syntax=JPEG2000Lossless))
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "invalid_image"
+    assert "DICOM" in response.json()["message"]
 
 
 def test_data_url_image_is_accepted(submit, xray_image):

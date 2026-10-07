@@ -34,9 +34,11 @@ The image is sent base64-encoded in the `image` field. A `data:image/...;base64,
 | BMP | Yes |
 | WebP | Yes |
 | GIF | Yes, first frame |
-| DICOM (`.dcm`) | Not yet |
+| DICOM (`.dcm`) | Yes: uncompressed, JPEG, JPEG 2000 and RLE; first frame |
 
 Use front (PA or AP) chest X-rays. Side (lateral) views are not read. Phone photos are turned upright using their orientation tag.
+
+DICOM files are shown with the window stored in the file, and inverted files (`MONOCHROME1`) are flipped so bones are white. A DICOM marked as a side view (`ViewPosition` of `LL` or `RL`) is rejected at upload.
 
 Other images are rejected in two steps: colour images at upload (`MAX_COLOUR_SPREAD` in `.env`; raise it if phone photos of films get rejected), then the model is asked whether the image is a front chest X-ray before it reads it. Public test sets: the Shenzhen and Montgomery chest X-ray sets from the US National Library of Medicine.
 
@@ -98,6 +100,7 @@ The status moves `pending` → `processing` → `complete`. Repeat the call unti
 | Colour photo | Submit a colour photo, such as a tree | 422 `invalid_image` |
 | Not a chest X-ray | Submit a greyscale image that is not a chest X-ray | Result `failed` with error `not_chest_xray` |
 | Side view | Submit a lateral chest X-ray | Result `failed` with error `not_frontal_view` |
+| Side view DICOM | Submit a DICOM with `ViewPosition` `LL` | 422 `not_frontal_view` |
 | Missing field | Submit without `facility_id` | 422 `invalid_request` |
 | Model down | Stop Ollama, then submit | 503 `model_unavailable` |
 | Model drops mid-queue | Submit, then stop Ollama before it completes | Scan stays `pending`, completes when Ollama is back |
