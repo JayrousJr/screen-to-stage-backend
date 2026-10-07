@@ -17,6 +17,10 @@ class AnalyzeResponse(BaseModel):
     status: ScanStatus
 
 
+class ImageCheck(BaseModel):
+    is_chest_xray: bool
+
+
 class ModelFindings(BaseModel):
     findings: list[str]
     flagged_regions: list[str]

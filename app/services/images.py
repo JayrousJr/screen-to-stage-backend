@@ -4,7 +4,7 @@ import os
 from io import BytesIO
 from pathlib import Path
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageChops, ImageStat, UnidentifiedImageError
 
 from app.config import settings
 
@@ -25,7 +25,10 @@ def decode(encoded: str) -> Image.Image:
         image.load()
     except (UnidentifiedImageError, OSError):
         raise InvalidImage("image could not be read")
-    return to_rgb(image)
+    image = to_rgb(image)
+    if colour_spread(image) > settings.max_colour_spread:
+        raise InvalidImage("image is in colour; an X-ray is greyscale")
+    return image
 
 
 def to_rgb(image: Image.Image) -> Image.Image:
@@ -34,6 +37,16 @@ def to_rgb(image: Image.Image) -> Image.Image:
         scale = 255 / ((high - low) or 1)
         image = image.convert("F").point(lambda value: (value - low) * scale).convert("L")
     return image.convert("RGB")
+
+
+# Mean gap between each pixel's brightest and darkest channel, 0-255; near 0 for greyscale.
+def colour_spread(image: Image.Image) -> float:
+    small = image.copy()
+    small.thumbnail((256, 256))
+    red, green, blue = small.split()
+    high = ImageChops.lighter(ImageChops.lighter(red, green), blue)
+    low = ImageChops.darker(ImageChops.darker(red, green), blue)
+    return ImageStat.Stat(ImageChops.subtract(high, low)).mean[0]
 
 
 def store(encoded: str, scan_id: str) -> Path:

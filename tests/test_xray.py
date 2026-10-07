@@ -4,7 +4,7 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
-from app.models.xray import ModelFindings
+from app.models.xray import ImageCheck, ModelFindings
 from app.services import images, inference, worker
 
 NORMAL = ModelFindings(findings=["Clear lung fields"], flagged_regions=[], abnormal=False, confidence="high")
@@ -109,6 +109,58 @@ def test_unreadable_image_returns_422(submit, db, image):
     assert response.status_code == 422
     assert response.json()["error"] == "invalid_image"
     assert db.execute("SELECT COUNT(*) FROM scans").fetchone()[0] == 0
+
+
+def test_colour_photo_returns_422(submit):
+    buffer = BytesIO()
+    Image.new("RGB", (64, 64), (40, 140, 50)).save(buffer, "PNG")
+
+    response = submit(base64.b64encode(buffer.getvalue()).decode())
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "invalid_image"
+
+
+def test_tinted_greyscale_is_accepted(submit):
+    buffer = BytesIO()
+    Image.new("RGB", (64, 64), (120, 128, 140)).save(buffer, "JPEG")
+
+    assert submit(base64.b64encode(buffer.getvalue()).decode()).status_code == 202
+
+
+def test_not_chest_xray_fails_scan(client, db, submit, monkeypatch):
+    analyze_raises(monkeypatch, inference.NotChestXray())
+    scan_id = submit().json()["scan_id"]
+
+    worker.process_next(db)
+
+    body = client.get(f"/api/xray/results/{scan_id}").json()
+    assert (body["status"], body["error"]) == ("failed", "not_chest_xray")
+
+
+def test_model_is_asked_whether_image_is_chest_xray(tmp_path, monkeypatch):
+    image_path = tmp_path / "scan.png"
+    image_path.write_bytes(b"png")
+    asked = []
+
+    def ask(image, prompt, schema):
+        asked.append(schema)
+        return ImageCheck(is_chest_xray=False)
+
+    monkeypatch.setattr(inference, "ask", ask)
+
+    with pytest.raises(inference.NotChestXray):
+        inference.analyze(image_path)
+    assert asked == [ImageCheck]
+
+
+def test_chest_xray_is_read_after_check(tmp_path, monkeypatch):
+    image_path = tmp_path / "scan.png"
+    image_path.write_bytes(b"png")
+    replies = {ImageCheck: ImageCheck(is_chest_xray=True), ModelFindings: NORMAL}
+    monkeypatch.setattr(inference, "ask", lambda image, prompt, schema: replies[schema])
+
+    assert inference.analyze(image_path) == NORMAL
 
 
 def test_data_url_image_is_accepted(submit, xray_image):

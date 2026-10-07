@@ -36,7 +36,7 @@ The image is sent base64-encoded in the `image` field. A `data:image/...;base64,
 | GIF | Yes, first frame |
 | DICOM (`.dcm`) | Not yet |
 
-Use frontal (PA or AP) chest X-rays. Public test sets: the Shenzhen and Montgomery chest X-ray sets from the US National Library of Medicine.
+Use frontal (PA or AP) chest X-rays. Other images are rejected in two steps: colour images at upload (`MAX_COLOUR_SPREAD` in `.env`; raise it if phone photos of films get rejected), then the model is asked whether the image is a chest X-ray before it reads it. Public test sets: the Shenzhen and Montgomery chest X-ray sets from the US National Library of Medicine.
 
 ## Testing by hand
 
@@ -92,6 +92,8 @@ The status moves `pending` → `processing` → `complete`. Repeat the call unti
 | Test | How | Expect |
 | --- | --- | --- |
 | Unreadable image | Submit `"image": "hello"` | 422 `invalid_image` |
+| Colour photo | Submit a colour photo, such as a tree | 422 `invalid_image` |
+| Not a chest X-ray | Submit a greyscale image that is not a chest X-ray | Result `failed` with error `not_chest_xray` |
 | Missing field | Submit without `facility_id` | 422 `invalid_request` |
 | Model down | Stop Ollama, then submit | 503 `model_unavailable` |
 | Model drops mid-queue | Submit, then stop Ollama before it completes | Scan stays `pending`, completes when Ollama is back |

@@ -44,6 +44,9 @@ def process_next(conn: sqlite3.Connection) -> bool:
     except inference.InferenceTimeout:
         set_status(conn, scan_id, "failed", "inference_timeout")
         return True
+    except inference.NotChestXray:
+        set_status(conn, scan_id, "failed", "not_chest_xray")
+        return True
     except inference.InvalidModelOutput:
         set_status(conn, scan_id, "failed", "invalid_model_output")
         return True
