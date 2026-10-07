@@ -118,6 +118,37 @@ python -m pytest
 
 These run without Ollama; the model is replaced by a stub.
 
+## Measuring accuracy
+
+`scripts/evaluate.py` sends a folder of X-rays through the running backend and reports how well it screens them. Start the backend with Ollama first.
+
+Get the Shenzhen and Montgomery sets from the US National Library of Medicine. Their file names end in `_0` (normal) or `_1` (TB), which is how the script knows the answer. Pass the folder that holds the X-rays (`CXR_png`), not the one holding the lung masks.
+
+```
+python scripts/evaluate.py \
+  --labelled ChinaSet_AllFiles/CXR_png \
+  --labelled MontgomerySet/CXR_png \
+  --not-chest other_images \
+  --side-view side_views
+```
+
+`--not-chest` and `--side-view` are optional: folders of images that should be rejected, such as photos, hand or knee X-rays, and lateral chest X-rays.
+
+Each result is written to `evaluation.csv` as soon as it arrives. If the run stops, run the same command again and it carries on where it left off. Use `--limit 20` for a quick first try, and `--summary-only` to print the report again.
+
+The report gives:
+
+| Line | Meaning | Aim for |
+| --- | --- | --- |
+| Sensitivity | TB cases sent for review | 90% or more |
+| Specificity | Normal cases not sent for review | 70% or more |
+| Review load | Normal cases sent for review anyway | As low as sensitivity allows |
+| Real chest X-rays wrongly rejected | Good X-rays the checks turned away | Close to 0% |
+| Non-chest images rejected | Photos and other X-rays turned away | Close to 100% |
+| Side views rejected | Lateral views turned away | Close to 100% |
+
+The 90% and 70% aims are the WHO targets for TB triage tests. Each figure comes with a 95% range: the true figure is likely to lie inside it. With few images the range is wide, so run the full sets before trusting a number.
+
 ## Data
 
 Scans and results are stored in `data/screen_to_stage.db`, images in `data/images/`. Delete the `data/` folder to start clean.
