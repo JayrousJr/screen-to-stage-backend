@@ -1,11 +1,23 @@
 import base64
 from pathlib import Path
+from typing import TypeVar
 
 import httpx
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.config import settings
-from app.models.xray import ModelFindings
+from app.models.xray import ImageCheck, ModelFindings
+
+T = TypeVar("T", bound=BaseModel)
+
+CHECK_PROMPT = (
+    "Look at this image. "
+    "Report in JSON: is_chest_xray, true only if it is a radiograph (X-ray) of a human chest, "
+    "false for anything else, such as a photo of a person, an object, a landscape, a document, "
+    "or an X-ray of another body part; "
+    "is_frontal, true if the chest is seen from the front or back (PA or AP view), "
+    "false if it is seen from the side (lateral view)."
+)
 
 PROMPT = (
     "You are assisting a clinician by screening a chest X-ray. "
@@ -31,6 +43,14 @@ class InvalidModelOutput(Exception):
     pass
 
 
+class NotChestXray(Exception):
+    pass
+
+
+class NotFrontalView(Exception):
+    pass
+
+
 def installed_models() -> list[str] | None:
     try:
         response = httpx.get(f"{settings.ollama_host}/api/tags", timeout=2.0)
@@ -50,14 +70,13 @@ def model_ready() -> bool:
     return models is not None and model_installed(models)
 
 
-def analyze(image_path: Path) -> ModelFindings:
-    image = base64.b64encode(image_path.read_bytes()).decode()
+def ask(image: str, prompt: str, schema: type[T]) -> T:
     payload = {
         "model": settings.ollama_model,
         "stream": False,
-        "format": ModelFindings.model_json_schema(),
+        "format": schema.model_json_schema(),
         "options": {"temperature": 0},
-        "messages": [{"role": "user", "content": PROMPT, "images": [image]}],
+        "messages": [{"role": "user", "content": prompt, "images": [image]}],
     }
     try:
         response = httpx.post(
@@ -73,6 +92,16 @@ def analyze(image_path: Path) -> ModelFindings:
     except httpx.HTTPError:
         raise ModelUnavailable
     try:
-        return ModelFindings.model_validate_json(response.json()["message"]["content"])
+        return schema.model_validate_json(response.json()["message"]["content"])
     except (ValidationError, KeyError, ValueError):
         raise InvalidModelOutput
+
+
+def analyze(image_path: Path) -> ModelFindings:
+    image = base64.b64encode(image_path.read_bytes()).decode()
+    check = ask(image, CHECK_PROMPT, ImageCheck)
+    if not check.is_chest_xray:
+        raise NotChestXray
+    if not check.is_frontal:
+        raise NotFrontalView
+    return ask(image, PROMPT, ModelFindings)

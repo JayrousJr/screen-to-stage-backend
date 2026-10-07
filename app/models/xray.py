@@ -17,6 +17,11 @@ class AnalyzeResponse(BaseModel):
     status: ScanStatus
 
 
+class ImageCheck(BaseModel):
+    is_chest_xray: bool
+    is_frontal: bool
+
+
 class ModelFindings(BaseModel):
     findings: list[str]
     flagged_regions: list[str]
@@ -37,3 +42,4 @@ class ResultResponse(BaseModel):
     requires_review: bool = True
     synced_to_dhis2: bool = False
     error: str | None = None
+    message: str | None = None

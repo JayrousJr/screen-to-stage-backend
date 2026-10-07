@@ -34,9 +34,13 @@ The image is sent base64-encoded in the `image` field. A `data:image/...;base64,
 | BMP | Yes |
 | WebP | Yes |
 | GIF | Yes, first frame |
-| DICOM (`.dcm`) | Not yet |
+| DICOM (`.dcm`) | Yes: uncompressed, JPEG, JPEG 2000 and RLE; first frame |
 
-Use frontal (PA or AP) chest X-rays. Public test sets: the Shenzhen and Montgomery chest X-ray sets from the US National Library of Medicine.
+Use front (PA or AP) chest X-rays. Side (lateral) views are not read. Phone photos are turned upright using their orientation tag.
+
+DICOM files are shown with the window stored in the file, and inverted files (`MONOCHROME1`) are flipped so bones are white. A DICOM marked as a side view (`ViewPosition` of `LL` or `RL`) is rejected at upload.
+
+Other images are rejected in two steps: colour images at upload (`MAX_COLOUR_SPREAD` in `.env`; raise it if phone photos of films get rejected), then the model is asked whether the image is a front chest X-ray before it reads it. Public test sets: the Shenzhen and Montgomery chest X-ray sets from the US National Library of Medicine.
 
 ## Testing by hand
 
@@ -81,7 +85,8 @@ The status moves `pending` → `processing` → `complete`. Repeat the call unti
   "confidence": "high",
   "requires_review": true,
   "synced_to_dhis2": false,
-  "error": null
+  "error": null,
+  "message": null
 }
 ```
 
@@ -92,6 +97,10 @@ The status moves `pending` → `processing` → `complete`. Repeat the call unti
 | Test | How | Expect |
 | --- | --- | --- |
 | Unreadable image | Submit `"image": "hello"` | 422 `invalid_image` |
+| Colour photo | Submit a colour photo, such as a tree | 422 `invalid_image` |
+| Not a chest X-ray | Submit a greyscale image that is not a chest X-ray | Result `failed` with error `not_chest_xray` |
+| Side view | Submit a lateral chest X-ray | Result `failed` with error `not_frontal_view` |
+| Side view DICOM | Submit a DICOM with `ViewPosition` `LL` | 422 `not_frontal_view` |
 | Missing field | Submit without `facility_id` | 422 `invalid_request` |
 | Model down | Stop Ollama, then submit | 503 `model_unavailable` |
 | Model drops mid-queue | Submit, then stop Ollama before it completes | Scan stays `pending`, completes when Ollama is back |
@@ -99,7 +108,7 @@ The status moves `pending` → `processing` → `complete`. Repeat the call unti
 | Slow model | Set `INFERENCE_TIMEOUT_SECONDS=1` in `.env`, restart, submit | 504 `inference_timeout` on the result |
 | Unknown scan | `GET /api/xray/results/abc` | 404 `scan_not_found` |
 
-Every error has the shape `{"error": "...", "detail": "..."}`; `detail` is present only when there is more to say.
+Every error has the shape `{"error": "...", "message": "...", "detail": "..."}`. `error` is a fixed code for the app to check, `message` is a sentence the app can show the health worker as is, and `detail` lists the wrong fields of an `invalid_request`. A `failed` result carries the same `error` and `message`.
 
 ## Automated tests
 
@@ -108,6 +117,37 @@ python -m pytest
 ```
 
 These run without Ollama; the model is replaced by a stub.
+
+## Measuring accuracy
+
+`scripts/evaluate.py` sends a folder of X-rays through the running backend and reports how well it screens them. Start the backend with Ollama first.
+
+Get the Shenzhen and Montgomery sets from the US National Library of Medicine. Their file names end in `_0` (normal) or `_1` (TB), which is how the script knows the answer. Pass the folder that holds the X-rays (`CXR_png`), not the one holding the lung masks.
+
+```
+python scripts/evaluate.py \
+  --labelled ChinaSet_AllFiles/CXR_png \
+  --labelled MontgomerySet/CXR_png \
+  --not-chest other_images \
+  --side-view side_views
+```
+
+`--not-chest` and `--side-view` are optional: folders of images that should be rejected, such as photos, hand or knee X-rays, and lateral chest X-rays.
+
+Each result is written to `evaluation.csv` as soon as it arrives. If the run stops, run the same command again and it carries on where it left off. Use `--limit 20` for a quick first try, and `--summary-only` to print the report again.
+
+The report gives:
+
+| Line | Meaning | Aim for |
+| --- | --- | --- |
+| Sensitivity | TB cases sent for review | 90% or more |
+| Specificity | Normal cases not sent for review | 70% or more |
+| Review load | Normal cases sent for review anyway | As low as sensitivity allows |
+| Real chest X-rays wrongly rejected | Good X-rays the checks turned away | Close to 0% |
+| Non-chest images rejected | Photos and other X-rays turned away | Close to 100% |
+| Side views rejected | Lateral views turned away | Close to 100% |
+
+The 90% and 70% aims are the WHO targets for TB triage tests. Each figure comes with a 95% range: the true figure is likely to lie inside it. With few images the range is wide, so run the full sets before trusting a number.
 
 ## Data
 

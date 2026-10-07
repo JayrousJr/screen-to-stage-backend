@@ -1,10 +1,14 @@
 import base64
 from io import BytesIO
 
+import numpy as np
 import pytest
 from PIL import Image
+from pydicom.dataset import Dataset, FileMetaDataset
+from pydicom.encaps import encapsulate
+from pydicom.uid import ExplicitVRLittleEndian, JPEG2000Lossless, generate_uid
 
-from app.models.xray import ModelFindings
+from app.models.xray import ImageCheck, ModelFindings
 from app.services import images, inference, worker
 
 NORMAL = ModelFindings(findings=["Clear lung fields"], flagged_regions=[], abnormal=False, confidence="high")
@@ -15,6 +19,35 @@ ABNORMAL = ModelFindings(
     confidence="high",
 )
 UNSURE = ModelFindings(findings=["Clear lung fields"], flagged_regions=[], abnormal=False, confidence="low")
+
+
+def dicom(pixels, photometric="MONOCHROME2", view="PA", transfer_syntax=ExplicitVRLittleEndian, **extra):
+    meta = FileMetaDataset()
+    meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.1.1"
+    meta.MediaStorageSOPInstanceUID = generate_uid()
+    meta.TransferSyntaxUID = transfer_syntax
+    dataset = Dataset()
+    dataset.file_meta = meta
+    dataset.SOPClassUID = meta.MediaStorageSOPClassUID
+    dataset.SOPInstanceUID = meta.MediaStorageSOPInstanceUID
+    dataset.Modality = "DX"
+    dataset.ViewPosition = view
+    dataset.Rows, dataset.Columns = pixels.shape
+    dataset.SamplesPerPixel = 1
+    dataset.PhotometricInterpretation = photometric
+    dataset.BitsAllocated = 16
+    dataset.BitsStored = 12
+    dataset.HighBit = 11
+    dataset.PixelRepresentation = 0
+    if transfer_syntax.is_compressed:
+        dataset.PixelData = encapsulate([b"not a jpeg 2000 frame"])
+    else:
+        dataset.PixelData = pixels.astype(np.uint16).tobytes()
+    for name, value in extra.items():
+        setattr(dataset, name, value)
+    buffer = BytesIO()
+    dataset.save_as(buffer, enforce_file_format=True)
+    return base64.b64encode(buffer.getvalue()).decode()
 
 
 def analyze_returns(monkeypatch, output):
@@ -43,6 +76,7 @@ def test_submit_returns_pending_scan(client, submit):
         "requires_review": True,
         "synced_to_dhis2": False,
         "error": None,
+        "message": None,
     }
 
 
@@ -111,6 +145,140 @@ def test_unreadable_image_returns_422(submit, db, image):
     assert db.execute("SELECT COUNT(*) FROM scans").fetchone()[0] == 0
 
 
+def test_colour_photo_returns_422(submit):
+    buffer = BytesIO()
+    Image.new("RGB", (64, 64), (40, 140, 50)).save(buffer, "PNG")
+
+    response = submit(base64.b64encode(buffer.getvalue()).decode())
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "error": "invalid_image",
+        "message": "This is a colour photo. Please upload the X-ray image itself.",
+    }
+
+
+def test_rotated_phone_photo_is_turned_upright():
+    source = Image.new("L", (4, 2), 0)
+    exif = source.getexif()
+    exif[0x0112] = 6
+    buffer = BytesIO()
+    source.save(buffer, "JPEG", exif=exif)
+
+    image = images.decode(base64.b64encode(buffer.getvalue()).decode())
+
+    assert image.size == (2, 4)
+
+
+def test_tinted_greyscale_is_accepted(submit):
+    buffer = BytesIO()
+    Image.new("RGB", (64, 64), (120, 128, 140)).save(buffer, "JPEG")
+
+    assert submit(base64.b64encode(buffer.getvalue()).decode()).status_code == 202
+
+
+def test_not_chest_xray_fails_scan(client, db, submit, monkeypatch):
+    analyze_raises(monkeypatch, inference.NotChestXray())
+    scan_id = submit().json()["scan_id"]
+
+    worker.process_next(db)
+
+    body = client.get(f"/api/xray/results/{scan_id}").json()
+    assert (body["status"], body["error"]) == ("failed", "not_chest_xray")
+    assert body["message"] == "This does not look like a chest X-ray. Please upload a chest X-ray."
+
+
+def test_side_view_fails_scan(client, db, submit, monkeypatch):
+    analyze_raises(monkeypatch, inference.NotFrontalView())
+    scan_id = submit().json()["scan_id"]
+
+    worker.process_next(db)
+
+    body = client.get(f"/api/xray/results/{scan_id}").json()
+    assert (body["status"], body["error"]) == ("failed", "not_frontal_view")
+    assert "front (PA) view" in body["message"]
+
+
+def test_side_view_is_not_read(tmp_path, monkeypatch):
+    image_path = tmp_path / "scan.png"
+    image_path.write_bytes(b"png")
+    replies = {ImageCheck: ImageCheck(is_chest_xray=True, is_frontal=False)}
+    monkeypatch.setattr(inference, "ask", lambda image, prompt, schema: replies[schema])
+
+    with pytest.raises(inference.NotFrontalView):
+        inference.analyze(image_path)
+
+
+def test_model_is_asked_whether_image_is_chest_xray(tmp_path, monkeypatch):
+    image_path = tmp_path / "scan.png"
+    image_path.write_bytes(b"png")
+    asked = []
+
+    def ask(image, prompt, schema):
+        asked.append(schema)
+        return ImageCheck(is_chest_xray=False, is_frontal=True)
+
+    monkeypatch.setattr(inference, "ask", ask)
+
+    with pytest.raises(inference.NotChestXray):
+        inference.analyze(image_path)
+    assert asked == [ImageCheck]
+
+
+def test_chest_xray_is_read_after_check(tmp_path, monkeypatch):
+    image_path = tmp_path / "scan.png"
+    image_path.write_bytes(b"png")
+    replies = {ImageCheck: ImageCheck(is_chest_xray=True, is_frontal=True), ModelFindings: NORMAL}
+    monkeypatch.setattr(inference, "ask", lambda image, prompt, schema: replies[schema])
+
+    assert inference.analyze(image_path) == NORMAL
+
+
+def test_dicom_is_accepted(submit):
+    assert submit(dicom(np.full((64, 64), 2000))).status_code == 202
+
+
+def test_dicom_keeps_its_contrast():
+    image = images.decode(dicom(np.array([[1000, 3000]])))
+
+    assert image.getpixel((0, 0)) == (0, 0, 0)
+    assert image.getpixel((1, 0)) == (255, 255, 255)
+
+
+def test_inverted_dicom_is_shown_bones_white():
+    image = images.decode(dicom(np.array([[1000, 3000]]), photometric="MONOCHROME1"))
+
+    assert image.getpixel((0, 0)) == (255, 255, 255)
+    assert image.getpixel((1, 0)) == (0, 0, 0)
+
+
+def test_dicom_window_is_applied():
+    image = images.decode(dicom(np.array([[0, 1500, 4000]]), WindowCenter=1500, WindowWidth=1000))
+
+    assert image.getpixel((0, 0)) == (0, 0, 0)
+    assert image.getpixel((2, 0)) == (255, 255, 255)
+
+
+@pytest.mark.parametrize("view", ["LL", "RL"])
+def test_side_view_dicom_returns_422(submit, db, view):
+    response = submit(dicom(np.full((64, 64), 2000), view=view))
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "error": "not_frontal_view",
+        "message": "This looks like a side view. Please upload the front (PA) view of the chest.",
+    }
+    assert db.execute("SELECT COUNT(*) FROM scans").fetchone()[0] == 0
+
+
+def test_unreadable_dicom_returns_422(submit):
+    response = submit(dicom(np.full((8, 8), 2000), transfer_syntax=JPEG2000Lossless))
+
+    assert response.status_code == 422
+    assert response.json()["error"] == "invalid_image"
+    assert "DICOM" in response.json()["message"]
+
+
 def test_data_url_image_is_accepted(submit, xray_image):
     assert submit(f"data:image/png;base64,{xray_image}").status_code == 202
 
@@ -141,6 +309,8 @@ def test_missing_field_returns_422(client, xray_image):
 
     assert response.status_code == 422
     assert response.json()["error"] == "invalid_request"
+    assert response.json()["message"] == "Some required information is missing or wrong."
+    assert "facility_id" in response.json()["detail"]
 
 
 def test_model_unavailable_returns_503(submit, monkeypatch):
@@ -149,7 +319,10 @@ def test_model_unavailable_returns_503(submit, monkeypatch):
     response = submit()
 
     assert response.status_code == 503
-    assert response.json() == {"error": "model_unavailable"}
+    assert response.json() == {
+        "error": "model_unavailable",
+        "message": "The X-ray reader is not running. Please try again in a few minutes.",
+    }
 
 
 def test_inference_timeout_returns_504(client, db, submit, monkeypatch):
@@ -160,7 +333,10 @@ def test_inference_timeout_returns_504(client, db, submit, monkeypatch):
 
     response = client.get(f"/api/xray/results/{scan_id}")
     assert response.status_code == 504
-    assert response.json() == {"error": "inference_timeout"}
+    assert response.json() == {
+        "error": "inference_timeout",
+        "message": "Reading the X-ray took too long. Please submit it again.",
+    }
 
 
 def test_invalid_model_output_fails_scan(client, db, submit, monkeypatch):
@@ -198,4 +374,4 @@ def test_unknown_scan_returns_404(client):
     response = client.get("/api/xray/results/missing")
 
     assert response.status_code == 404
-    assert response.json() == {"error": "scan_not_found"}
+    assert response.json() == {"error": "scan_not_found", "message": "No scan was found with this ID."}

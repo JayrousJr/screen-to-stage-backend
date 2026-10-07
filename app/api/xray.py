@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends
 
-from app.api.errors import ApiError
+from app.api.errors import MESSAGES, ApiError
 from app.db.database import get_db
 from app.models.xray import AnalyzeRequest, AnalyzeResponse, ResultResponse
 from app.services import images, inference, worker
@@ -21,7 +21,7 @@ def analyze(request: AnalyzeRequest, db: sqlite3.Connection = Depends(get_db)) -
     try:
         image_path = images.store(request.image, scan_id)
     except images.InvalidImage as exc:
-        raise ApiError(422, "invalid_image", str(exc))
+        raise ApiError(422, exc.error, str(exc) or None)
 
     with db:
         db.execute(
@@ -48,7 +48,12 @@ def result(scan_id: str, db: sqlite3.Connection = Depends(get_db)) -> ResultResp
     if row["error"] == "inference_timeout":
         raise ApiError(504, "inference_timeout")
     if row["status"] != "complete":
-        return ResultResponse(scan_id=scan_id, status=row["status"], error=row["error"])
+        return ResultResponse(
+            scan_id=scan_id,
+            status=row["status"],
+            error=row["error"],
+            message=MESSAGES.get(row["error"]),
+        )
 
     return ResultResponse(
         scan_id=scan_id,
