@@ -47,6 +47,9 @@ def process_next(conn: sqlite3.Connection) -> bool:
     except inference.NotChestXray:
         set_status(conn, scan_id, "failed", "not_chest_xray")
         return True
+    except inference.NotFrontalView:
+        set_status(conn, scan_id, "failed", "not_frontal_view")
+        return True
     except inference.InvalidModelOutput:
         set_status(conn, scan_id, "failed", "invalid_model_output")
         return True

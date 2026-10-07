@@ -14,7 +14,9 @@ CHECK_PROMPT = (
     "Look at this image. "
     "Report in JSON: is_chest_xray, true only if it is a radiograph (X-ray) of a human chest, "
     "false for anything else, such as a photo of a person, an object, a landscape, a document, "
-    "or an X-ray of another body part."
+    "or an X-ray of another body part; "
+    "is_frontal, true if the chest is seen from the front or back (PA or AP view), "
+    "false if it is seen from the side (lateral view)."
 )
 
 PROMPT = (
@@ -42,6 +44,10 @@ class InvalidModelOutput(Exception):
 
 
 class NotChestXray(Exception):
+    pass
+
+
+class NotFrontalView(Exception):
     pass
 
 
@@ -93,6 +99,9 @@ def ask(image: str, prompt: str, schema: type[T]) -> T:
 
 def analyze(image_path: Path) -> ModelFindings:
     image = base64.b64encode(image_path.read_bytes()).decode()
-    if not ask(image, CHECK_PROMPT, ImageCheck).is_chest_xray:
+    check = ask(image, CHECK_PROMPT, ImageCheck)
+    if not check.is_chest_xray:
         raise NotChestXray
+    if not check.is_frontal:
+        raise NotFrontalView
     return ask(image, PROMPT, ModelFindings)

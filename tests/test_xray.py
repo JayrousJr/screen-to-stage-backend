@@ -43,6 +43,7 @@ def test_submit_returns_pending_scan(client, submit):
         "requires_review": True,
         "synced_to_dhis2": False,
         "error": None,
+        "message": None,
     }
 
 
@@ -118,7 +119,22 @@ def test_colour_photo_returns_422(submit):
     response = submit(base64.b64encode(buffer.getvalue()).decode())
 
     assert response.status_code == 422
-    assert response.json()["error"] == "invalid_image"
+    assert response.json() == {
+        "error": "invalid_image",
+        "message": "This is a colour photo. Please upload the X-ray image itself.",
+    }
+
+
+def test_rotated_phone_photo_is_turned_upright():
+    source = Image.new("L", (4, 2), 0)
+    exif = source.getexif()
+    exif[0x0112] = 6
+    buffer = BytesIO()
+    source.save(buffer, "JPEG", exif=exif)
+
+    image = images.decode(base64.b64encode(buffer.getvalue()).decode())
+
+    assert image.size == (2, 4)
 
 
 def test_tinted_greyscale_is_accepted(submit):
@@ -136,6 +152,28 @@ def test_not_chest_xray_fails_scan(client, db, submit, monkeypatch):
 
     body = client.get(f"/api/xray/results/{scan_id}").json()
     assert (body["status"], body["error"]) == ("failed", "not_chest_xray")
+    assert body["message"] == "This does not look like a chest X-ray. Please upload a chest X-ray."
+
+
+def test_side_view_fails_scan(client, db, submit, monkeypatch):
+    analyze_raises(monkeypatch, inference.NotFrontalView())
+    scan_id = submit().json()["scan_id"]
+
+    worker.process_next(db)
+
+    body = client.get(f"/api/xray/results/{scan_id}").json()
+    assert (body["status"], body["error"]) == ("failed", "not_frontal_view")
+    assert "front (PA) view" in body["message"]
+
+
+def test_side_view_is_not_read(tmp_path, monkeypatch):
+    image_path = tmp_path / "scan.png"
+    image_path.write_bytes(b"png")
+    replies = {ImageCheck: ImageCheck(is_chest_xray=True, is_frontal=False)}
+    monkeypatch.setattr(inference, "ask", lambda image, prompt, schema: replies[schema])
+
+    with pytest.raises(inference.NotFrontalView):
+        inference.analyze(image_path)
 
 
 def test_model_is_asked_whether_image_is_chest_xray(tmp_path, monkeypatch):
@@ -145,7 +183,7 @@ def test_model_is_asked_whether_image_is_chest_xray(tmp_path, monkeypatch):
 
     def ask(image, prompt, schema):
         asked.append(schema)
-        return ImageCheck(is_chest_xray=False)
+        return ImageCheck(is_chest_xray=False, is_frontal=True)
 
     monkeypatch.setattr(inference, "ask", ask)
 
@@ -157,7 +195,7 @@ def test_model_is_asked_whether_image_is_chest_xray(tmp_path, monkeypatch):
 def test_chest_xray_is_read_after_check(tmp_path, monkeypatch):
     image_path = tmp_path / "scan.png"
     image_path.write_bytes(b"png")
-    replies = {ImageCheck: ImageCheck(is_chest_xray=True), ModelFindings: NORMAL}
+    replies = {ImageCheck: ImageCheck(is_chest_xray=True, is_frontal=True), ModelFindings: NORMAL}
     monkeypatch.setattr(inference, "ask", lambda image, prompt, schema: replies[schema])
 
     assert inference.analyze(image_path) == NORMAL
@@ -193,6 +231,8 @@ def test_missing_field_returns_422(client, xray_image):
 
     assert response.status_code == 422
     assert response.json()["error"] == "invalid_request"
+    assert response.json()["message"] == "Some required information is missing or wrong."
+    assert "facility_id" in response.json()["detail"]
 
 
 def test_model_unavailable_returns_503(submit, monkeypatch):
@@ -201,7 +241,10 @@ def test_model_unavailable_returns_503(submit, monkeypatch):
     response = submit()
 
     assert response.status_code == 503
-    assert response.json() == {"error": "model_unavailable"}
+    assert response.json() == {
+        "error": "model_unavailable",
+        "message": "The X-ray reader is not running. Please try again in a few minutes.",
+    }
 
 
 def test_inference_timeout_returns_504(client, db, submit, monkeypatch):
@@ -212,7 +255,10 @@ def test_inference_timeout_returns_504(client, db, submit, monkeypatch):
 
     response = client.get(f"/api/xray/results/{scan_id}")
     assert response.status_code == 504
-    assert response.json() == {"error": "inference_timeout"}
+    assert response.json() == {
+        "error": "inference_timeout",
+        "message": "Reading the X-ray took too long. Please submit it again.",
+    }
 
 
 def test_invalid_model_output_fails_scan(client, db, submit, monkeypatch):
@@ -250,4 +296,4 @@ def test_unknown_scan_returns_404(client):
     response = client.get("/api/xray/results/missing")
 
     assert response.status_code == 404
-    assert response.json() == {"error": "scan_not_found"}
+    assert response.json() == {"error": "scan_not_found", "message": "No scan was found with this ID."}

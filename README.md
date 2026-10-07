@@ -36,7 +36,9 @@ The image is sent base64-encoded in the `image` field. A `data:image/...;base64,
 | GIF | Yes, first frame |
 | DICOM (`.dcm`) | Not yet |
 
-Use frontal (PA or AP) chest X-rays. Other images are rejected in two steps: colour images at upload (`MAX_COLOUR_SPREAD` in `.env`; raise it if phone photos of films get rejected), then the model is asked whether the image is a chest X-ray before it reads it. Public test sets: the Shenzhen and Montgomery chest X-ray sets from the US National Library of Medicine.
+Use front (PA or AP) chest X-rays. Side (lateral) views are not read. Phone photos are turned upright using their orientation tag.
+
+Other images are rejected in two steps: colour images at upload (`MAX_COLOUR_SPREAD` in `.env`; raise it if phone photos of films get rejected), then the model is asked whether the image is a front chest X-ray before it reads it. Public test sets: the Shenzhen and Montgomery chest X-ray sets from the US National Library of Medicine.
 
 ## Testing by hand
 
@@ -81,7 +83,8 @@ The status moves `pending` → `processing` → `complete`. Repeat the call unti
   "confidence": "high",
   "requires_review": true,
   "synced_to_dhis2": false,
-  "error": null
+  "error": null,
+  "message": null
 }
 ```
 
@@ -94,6 +97,7 @@ The status moves `pending` → `processing` → `complete`. Repeat the call unti
 | Unreadable image | Submit `"image": "hello"` | 422 `invalid_image` |
 | Colour photo | Submit a colour photo, such as a tree | 422 `invalid_image` |
 | Not a chest X-ray | Submit a greyscale image that is not a chest X-ray | Result `failed` with error `not_chest_xray` |
+| Side view | Submit a lateral chest X-ray | Result `failed` with error `not_frontal_view` |
 | Missing field | Submit without `facility_id` | 422 `invalid_request` |
 | Model down | Stop Ollama, then submit | 503 `model_unavailable` |
 | Model drops mid-queue | Submit, then stop Ollama before it completes | Scan stays `pending`, completes when Ollama is back |
@@ -101,7 +105,7 @@ The status moves `pending` → `processing` → `complete`. Repeat the call unti
 | Slow model | Set `INFERENCE_TIMEOUT_SECONDS=1` in `.env`, restart, submit | 504 `inference_timeout` on the result |
 | Unknown scan | `GET /api/xray/results/abc` | 404 `scan_not_found` |
 
-Every error has the shape `{"error": "...", "detail": "..."}`; `detail` is present only when there is more to say.
+Every error has the shape `{"error": "...", "message": "...", "detail": "..."}`. `error` is a fixed code for the app to check, `message` is a sentence the app can show the health worker as is, and `detail` lists the wrong fields of an `invalid_request`. A `failed` result carries the same `error` and `message`.
 
 ## Automated tests
 

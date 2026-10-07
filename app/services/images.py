@@ -4,7 +4,7 @@ import os
 from io import BytesIO
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageStat, UnidentifiedImageError
+from PIL import Image, ImageChops, ImageOps, ImageStat, UnidentifiedImageError
 
 from app.config import settings
 
@@ -19,15 +19,15 @@ def decode(encoded: str) -> Image.Image:
     try:
         raw = base64.b64decode(encoded, validate=True)
     except binascii.Error:
-        raise InvalidImage("image is not valid base64")
+        raise InvalidImage("The image could not be opened. Please choose or take the picture again.")
     try:
         image = Image.open(BytesIO(raw))
         image.load()
     except (UnidentifiedImageError, OSError):
-        raise InvalidImage("image could not be read")
-    image = to_rgb(image)
+        raise InvalidImage("This file is not an image. Please upload a PNG, JPEG, TIFF, BMP, WebP or GIF.")
+    image = to_rgb(ImageOps.exif_transpose(image))
     if colour_spread(image) > settings.max_colour_spread:
-        raise InvalidImage("image is in colour; an X-ray is greyscale")
+        raise InvalidImage("This is a colour photo. Please upload the X-ray image itself.")
     return image
 
 
@@ -39,7 +39,6 @@ def to_rgb(image: Image.Image) -> Image.Image:
     return image.convert("RGB")
 
 
-# Mean gap between each pixel's brightest and darkest channel, 0-255; near 0 for greyscale.
 def colour_spread(image: Image.Image) -> float:
     small = image.copy()
     small.thumbnail((256, 256))
