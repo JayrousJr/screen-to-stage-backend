@@ -13,6 +13,7 @@ from pydicom.pixels import apply_modality_lut, apply_voi_lut
 from app.config import settings
 
 SIDE_VIEWS = {"LL", "RL", "LATERAL"}
+CHEST_PARTS = {"", "CHEST", "THORAX", "LUNG"}
 
 
 class InvalidImage(Exception):
@@ -48,7 +49,9 @@ def read_dicom(raw: bytes) -> Image.Image:
         dataset = pydicom.dcmread(BytesIO(raw))
     except (InvalidDicomError, OSError, ValueError):
         raise InvalidImage("This DICOM file is damaged and could not be opened.")
-    if str(dataset.get("ViewPosition", "")).strip().upper() in SIDE_VIEWS:
+    body_part = str(dataset.get("BodyPartExamined", "")).strip().upper()
+    side_view = str(dataset.get("ViewPosition", "")).strip().upper() in SIDE_VIEWS
+    if side_view and body_part in CHEST_PARTS:
         raise SideView
     try:
         pixels = dataset.pixel_array

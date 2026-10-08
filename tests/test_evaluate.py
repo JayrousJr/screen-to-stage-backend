@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from app.models.xray import ModelFindings
 from app.services import inference, worker
 from scripts import evaluate
+from tests.readings import reading
 
-TB = ModelFindings(findings=["Cavity"], flagged_regions=["right upper zone"], abnormal=True, confidence="high")
-CLEAR = ModelFindings(findings=["Clear lung fields"], flagged_regions=[], abnormal=False, confidence="high")
+TB = reading("tb_signs", findings=["Cavity"], regions=["right upper zone"])
+CLEAR = reading()
 
 
 @pytest.mark.parametrize(
@@ -43,7 +43,7 @@ def test_summary_counts_screening_and_checks():
     assert "(1/1," in lines["Normal cases not flagged (specificity)"]
     assert "(1/3," in lines["TB cases flagged, counting rejects as missed"]
     assert "(1/4," in lines["Real chest X-rays wrongly rejected"]
-    assert "(1/1," in lines["Non-chest images rejected"]
+    assert "(1/1," in lines["Images that should be rejected, rejected"]
     assert "(0/1," in lines["Side views rejected for any reason"]
     assert "not_chest_xray 1" in lines["Why real chest X-rays were rejected"]
 

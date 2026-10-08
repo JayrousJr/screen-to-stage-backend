@@ -11,8 +11,10 @@ from pathlib import Path
 import httpx
 
 IMAGE_TYPES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".gif", ".dcm"}
-COLUMNS = ["set", "file", "expected", "outcome", "requires_review", "confidence", "flagged_regions", "seconds"]
-REJECTIONS = {"invalid_image", "not_chest_xray", "not_frontal_view"}
+COLUMNS = [
+    "set", "file", "expected", "outcome", "requires_review", "confidence", "conditions", "flagged_regions", "seconds",
+]
+REJECTIONS = {"invalid_image", "not_xray", "not_chest_xray", "unsupported_body_part", "not_frontal_view"}
 
 
 def label(path: Path) -> str | None:
@@ -91,6 +93,7 @@ def run_one(client: httpx.Client, path: Path, poll_seconds: float) -> dict:
                 "outcome": "read",
                 "requires_review": body["requires_review"],
                 "confidence": body["confidence"],
+                "conditions": "; ".join(body.get("conditions", [])),
                 "flagged_regions": "; ".join(body["flagged_regions"]),
                 "seconds": round(time.monotonic() - started, 1),
             }
@@ -136,7 +139,7 @@ def summarise(rows: list[dict]) -> str:
         "",
         "Image checks",
         line("Real chest X-rays wrongly rejected", rate(len(chest_rejected), len(chest))),
-        line("Non-chest images rejected", rate(sum(r["outcome"] in REJECTIONS for r in not_chest), len(not_chest))),
+        line("Images that should be rejected, rejected", rate(sum(r["outcome"] in REJECTIONS for r in not_chest), len(not_chest))),
         line("Side views rejected as side views", rate(sum(r["outcome"] == "not_frontal_view" for r in side), len(side))),
         line("Side views rejected for any reason", rate(sum(r["outcome"] in REJECTIONS for r in side), len(side))),
     ]
@@ -167,6 +170,11 @@ def load(out: Path) -> list[dict]:
         return list(csv.DictReader(file))
 
 
+def header(out: Path) -> list[str]:
+    with open(out, newline="") as file:
+        return csv.DictReader(file).fieldnames or COLUMNS
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Measure how well the backend screens chest X-rays.")
     parser.add_argument("--labelled", type=Path, action="append", default=[],
@@ -177,8 +185,8 @@ def main() -> None:
                         help="folder of chest X-rays with TB, such as TBX11K imgs/tb")
     parser.add_argument("--sick", type=Path, action="append", default=[],
                         help="folder of chest X-rays with lung disease other than TB, such as TBX11K imgs/sick")
-    parser.add_argument("--not-chest", type=Path, action="append", default=[],
-                        help="folder of images that are not chest X-rays")
+    parser.add_argument("--not-chest", "--reject", dest="not_chest", type=Path, action="append", default=[],
+                        help="folder of images that should be rejected, such as photos")
     parser.add_argument("--side-view", type=Path, action="append", default=[],
                         help="folder of side-view (lateral) chest X-rays")
     parser.add_argument("--url", default="http://localhost:8000")
@@ -198,8 +206,9 @@ def main() -> None:
         if not todo and not rows:
             parser.error("no images found; pass --labelled, --normal, --tb, --sick, --not-chest or --side-view")
         new_file = not args.out.exists()
+        columns = COLUMNS if new_file else header(args.out)
         with httpx.Client(base_url=args.url, timeout=60.0) as client, open(args.out, "a", newline="") as file:
-            writer = csv.DictWriter(file, fieldnames=COLUMNS)
+            writer = csv.DictWriter(file, fieldnames=columns, extrasaction="ignore")
             if new_file:
                 writer.writeheader()
             for number, (set_name, path, expected) in enumerate(todo, 1):
@@ -207,9 +216,10 @@ def main() -> None:
                 row = {column: "" for column in COLUMNS} | {"set": set_name, "file": str(path), "expected": expected} | result
                 writer.writerow(row)
                 file.flush()
-                rows.append({k: str(v) for k, v in row.items()})
+                rows.append({k: str(row.get(k, "")) for k in COLUMNS})
                 print(f"[{number}/{len(todo)}] {path.name}: {expected} -> {result['outcome']}"
-                      + (f", review {result['requires_review']}" if result["outcome"] == "read" else ""))
+                      + (f", review {result['requires_review']}" if result["outcome"] == "read" else "")
+                      + (f" ({result['conditions']})" if result.get("conditions") else ""))
     print()
     print(summarise(rows))
 
