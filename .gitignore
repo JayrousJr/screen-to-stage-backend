@@ -5,3 +5,5 @@
 __pycache__/
 .pytest_cache/
 evaluation.csv
+payload.json
+tbx11k.csv
