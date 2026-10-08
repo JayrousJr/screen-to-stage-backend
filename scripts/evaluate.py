@@ -2,6 +2,7 @@ import argparse
 import base64
 import csv
 import math
+import random
 import re
 import sys
 import time
@@ -26,6 +27,13 @@ def images_in(folder: Path) -> list[Path]:
 
 
 def cases(args: argparse.Namespace) -> list[tuple[str, Path, str]]:
+    shuffle = random.Random(0)
+
+    def pick(paths: list[Path]) -> list[Path]:
+        if args.sample and len(paths) > args.sample:
+            return sorted(shuffle.sample(paths, args.sample))
+        return paths
+
     found = []
     for folder in args.labelled:
         for path in images_in(folder):
@@ -34,8 +42,19 @@ def cases(args: argparse.Namespace) -> list[tuple[str, Path, str]]:
                 print(f"skipped, no _0 or _1 at the end of the name: {path}", file=sys.stderr)
                 continue
             found.append((folder.name, path, expected))
-    found += [(folder.name, path, "not_chest") for folder in args.not_chest for path in images_in(folder)]
-    found += [(folder.name, path, "side_view") for folder in args.side_view for path in images_in(folder)]
+    for expected, folders in (
+        ("normal", args.normal),
+        ("tb", args.tb),
+        ("sick", args.sick),
+        ("not_chest", args.not_chest),
+        ("side_view", args.side_view),
+    ):
+        found += [(folder.name, path, expected) for folder in folders for path in images_in(folder)]
+    by_expected = {}
+    for case in found:
+        by_expected.setdefault(case[2], []).append(case)
+    found = [case for group in by_expected.values() for case in pick(group)]
+    shuffle.shuffle(found)
     return found
 
 
@@ -101,7 +120,7 @@ def summarise(rows: list[dict]) -> str:
     flagged = lambda r: r["outcome"] == "read" and str(r["requires_review"]) == "True"
     tb, normal = where(expected="tb"), where(expected="normal")
     tb_read, normal_read = where(expected="tb", outcome="read"), where(expected="normal", outcome="read")
-    chest = tb + normal
+    chest = tb + normal + where(expected="sick")
     chest_rejected = [r for r in chest if r["outcome"] in REJECTIONS]
     not_chest, side = where(expected="not_chest"), where(expected="side_view")
     seconds = [float(r["seconds"]) for r in rows if r["seconds"]]
@@ -113,6 +132,7 @@ def summarise(rows: list[dict]) -> str:
         line("Normal cases not flagged (specificity)", rate(sum(not flagged(r) for r in normal_read), len(normal_read))),
         line("Normal cases flagged anyway (review load)", rate(sum(map(flagged, normal_read)), len(normal_read))),
         line("TB cases flagged, counting rejects as missed", rate(sum(map(flagged, tb)), len(tb))),
+        line("Other lung disease flagged for review", rate(sum(map(flagged, where(expected="sick", outcome="read"))), len(where(expected="sick", outcome="read")))),
         "",
         "Image checks",
         line("Real chest X-rays wrongly rejected", rate(len(chest_rejected), len(chest))),
@@ -151,12 +171,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Measure how well the backend screens chest X-rays.")
     parser.add_argument("--labelled", type=Path, action="append", default=[],
                         help="folder of chest X-rays named ..._0 (normal) or ..._1 (TB), as in Shenzhen and Montgomery")
+    parser.add_argument("--normal", type=Path, action="append", default=[],
+                        help="folder of healthy chest X-rays, such as TBX11K imgs/health")
+    parser.add_argument("--tb", type=Path, action="append", default=[],
+                        help="folder of chest X-rays with TB, such as TBX11K imgs/tb")
+    parser.add_argument("--sick", type=Path, action="append", default=[],
+                        help="folder of chest X-rays with lung disease other than TB, such as TBX11K imgs/sick")
     parser.add_argument("--not-chest", type=Path, action="append", default=[],
                         help="folder of images that are not chest X-rays")
     parser.add_argument("--side-view", type=Path, action="append", default=[],
                         help="folder of side-view (lateral) chest X-rays")
     parser.add_argument("--url", default="http://localhost:8000")
     parser.add_argument("--out", type=Path, default=Path("evaluation.csv"))
+    parser.add_argument("--sample", type=int, help="use at most this many images of each kind, picked at random")
     parser.add_argument("--limit", type=int, help="only run this many new images")
     parser.add_argument("--poll-seconds", type=float, default=2.0)
     parser.add_argument("--summary-only", action="store_true", help="print the summary of an earlier run")
@@ -169,7 +196,7 @@ def main() -> None:
         if args.limit:
             todo = todo[: args.limit]
         if not todo and not rows:
-            parser.error("no images found; pass --labelled, --not-chest or --side-view")
+            parser.error("no images found; pass --labelled, --normal, --tb, --sick, --not-chest or --side-view")
         new_file = not args.out.exists()
         with httpx.Client(base_url=args.url, timeout=60.0) as client, open(args.out, "a", newline="") as file:
             writer = csv.DictWriter(file, fieldnames=COLUMNS)

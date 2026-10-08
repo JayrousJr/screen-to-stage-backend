@@ -134,7 +134,19 @@ python scripts/evaluate.py \
 
 `--not-chest` and `--side-view` are optional: folders of images that should be rejected, such as photos, hand or knee X-rays, and lateral chest X-rays.
 
-Each result is written to `evaluation.csv` as soon as it arrives. If the run stops, run the same command again and it carries on where it left off. Use `--limit 20` for a quick first try, and `--summary-only` to print the report again.
+For sets that sort images into folders instead, such as TBX11K, say what each folder holds:
+
+```
+python scripts/evaluate.py \
+  --normal TBX11K/imgs/health \
+  --tb TBX11K/imgs/tb \
+  --sick TBX11K/imgs/sick \
+  --sample 200
+```
+
+`--sick` is for lung disease other than TB; those X-rays should still be sent for review. TBX11K's `imgs/test` folder has no answers released, so leave it out. `--sample 200` picks 200 images of each kind at random, the same ones every run, which keeps a large set to a few hours.
+
+Each result is written to `evaluation.csv` as soon as it arrives. If the run stops, run the same command again and it carries on where it left off. Images run in a mixed order, so a part-finished run still gives a fair picture. Use a different `--out` file for each set so their results stay apart. Use `--limit 20` for a quick first try, and `--summary-only` to print the report again.
 
 The report gives:
 
@@ -143,6 +155,7 @@ The report gives:
 | Sensitivity | TB cases sent for review | 90% or more |
 | Specificity | Normal cases not sent for review | 70% or more |
 | Review load | Normal cases sent for review anyway | As low as sensitivity allows |
+| Other lung disease flagged | Non-TB disease sent for review | High |
 | Real chest X-rays wrongly rejected | Good X-rays the checks turned away | Close to 0% |
 | Non-chest images rejected | Photos and other X-rays turned away | Close to 100% |
 | Side views rejected | Lateral views turned away | Close to 100% |
