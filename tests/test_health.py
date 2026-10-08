@@ -7,8 +7,8 @@ from app.services import inference
 
 
 def test_health_ok_when_model_installed(client, monkeypatch):
-    monkeypatch.setattr(settings, "ollama_model", "medgemma:4b")
-    monkeypatch.setattr(inference, "installed_models", lambda: ["medgemma:4b"])
+    monkeypatch.setattr(settings, "ollama_model", "medgemma1.5:4b-it-bf16")
+    monkeypatch.setattr(inference, "installed_models", lambda: ["medgemma1.5:4b-it-bf16"])
 
     response = client.get("/api/health")
 
@@ -17,7 +17,7 @@ def test_health_ok_when_model_installed(client, monkeypatch):
         "status": "ok",
         "ollama_reachable": True,
         "model_available": True,
-        "model": "medgemma:4b",
+        "model": "medgemma1.5:4b-it-bf16",
     }
 
 
