@@ -18,6 +18,8 @@ def test_health_ok_when_model_installed(client, monkeypatch):
         "ollama_reachable": True,
         "model_available": True,
         "model": "medgemma1.5:4b-it-bf16",
+        "installed_models": ["medgemma1.5:4b-it-bf16"],
+        "message": None,
     }
 
 
@@ -29,6 +31,20 @@ def test_health_degraded_when_model_missing(client, monkeypatch):
     assert body["status"] == "degraded"
     assert body["ollama_reachable"] is True
     assert body["model_available"] is False
+    assert body["message"] == f"{settings.ollama_model} is not installed. Run: ollama pull {settings.ollama_model}"
+
+
+def test_health_points_to_similar_installed_model(client, monkeypatch):
+    monkeypatch.setattr(settings, "ollama_model", "medgemma1.5:4b")
+    monkeypatch.setattr(inference, "installed_models", lambda: ["llama3:latest", "medgemma1.5:4b-it-bf16"])
+
+    body = client.get("/api/health").json()
+
+    assert body["installed_models"] == ["llama3:latest", "medgemma1.5:4b-it-bf16"]
+    assert body["message"] == (
+        "medgemma1.5:4b is not installed, but medgemma1.5:4b-it-bf16 is. "
+        "Set OLLAMA_MODEL=medgemma1.5:4b-it-bf16 in .env and restart, or run: ollama pull medgemma1.5:4b"
+    )
 
 
 def test_health_degraded_when_ollama_unreachable(client, monkeypatch):
@@ -39,6 +55,7 @@ def test_health_degraded_when_ollama_unreachable(client, monkeypatch):
     assert body["status"] == "degraded"
     assert body["ollama_reachable"] is False
     assert body["model_available"] is False
+    assert body["message"].startswith("Ollama is not running")
 
 
 def test_older_database_gets_new_columns(tmp_path, monkeypatch):

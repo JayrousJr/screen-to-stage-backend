@@ -66,7 +66,7 @@ CT, MRI, fluoroscopy, angiography and mammography are not supported: they need m
 curl -s localhost:8000/api/health
 ```
 
-Expect `"status": "ok"`.
+Expect `"status": "ok"`. If it says `"degraded"`, `message` says what to fix, and `installed_models` lists the models Ollama has. `OLLAMA_MODEL` must match one of them exactly.
 
 ### 2. Submit an X-ray
 
