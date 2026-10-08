@@ -51,6 +51,9 @@ cp .env.example .env
 | `DHIS2_TOKEN`   | DHIS2 access token                               |
 | `DATABASE_PATH` | SQLite file, created on first start              |
 | `IMAGE_DIR`     | Where uploaded images are stored                 |
+| `BODY_PARTS`    | Body parts to read, default `["chest","bone_joint","abdomen","dental_head"]` |
+| `LOCATE_FINDINGS` | Return boxes around findings, default `true`   |
+| `COMPARE_WITH_PREVIOUS` | Compare with the patient's last X-ray, default `true` |
 
 ## 5. Run
 

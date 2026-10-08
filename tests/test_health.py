@@ -56,9 +56,11 @@ def test_older_database_gets_new_columns(tmp_path, monkeypatch):
     init_db()
 
     conn = sqlite3.connect(settings.database_path)
-    row = conn.execute("SELECT conditions, devices FROM results WHERE scan_id = 'old'").fetchone()
+    row = conn.execute(
+        "SELECT body_part, conditions, devices, boxes, comparison FROM results WHERE scan_id = 'old'"
+    ).fetchone()
     conn.close()
-    assert row == ("[]", "[]")
+    assert row == ("chest", "[]", "[]", "[]", None)
 
 
 def test_startup_creates_schema(client):

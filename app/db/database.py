@@ -6,7 +6,13 @@ from app.config import settings
 
 SCHEMA = Path(__file__).with_name("schema.sql")
 ADDED_COLUMNS = {
-    "results": {"conditions": "TEXT NOT NULL DEFAULT '[]'", "devices": "TEXT NOT NULL DEFAULT '[]'"},
+    "results": {
+        "body_part": "TEXT NOT NULL DEFAULT 'chest'",
+        "conditions": "TEXT NOT NULL DEFAULT '[]'",
+        "devices": "TEXT NOT NULL DEFAULT '[]'",
+        "boxes": "TEXT NOT NULL DEFAULT '[]'",
+        "comparison": "TEXT",
+    },
 }
 
 

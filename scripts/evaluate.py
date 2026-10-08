@@ -14,7 +14,7 @@ IMAGE_TYPES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".gif"
 COLUMNS = [
     "set", "file", "expected", "outcome", "requires_review", "confidence", "conditions", "flagged_regions", "seconds",
 ]
-REJECTIONS = {"invalid_image", "not_chest_xray", "not_frontal_view"}
+REJECTIONS = {"invalid_image", "not_xray", "not_chest_xray", "unsupported_body_part", "not_frontal_view"}
 
 
 def label(path: Path) -> str | None:
@@ -139,7 +139,7 @@ def summarise(rows: list[dict]) -> str:
         "",
         "Image checks",
         line("Real chest X-rays wrongly rejected", rate(len(chest_rejected), len(chest))),
-        line("Non-chest images rejected", rate(sum(r["outcome"] in REJECTIONS for r in not_chest), len(not_chest))),
+        line("Images that should be rejected, rejected", rate(sum(r["outcome"] in REJECTIONS for r in not_chest), len(not_chest))),
         line("Side views rejected as side views", rate(sum(r["outcome"] == "not_frontal_view" for r in side), len(side))),
         line("Side views rejected for any reason", rate(sum(r["outcome"] in REJECTIONS for r in side), len(side))),
     ]
@@ -185,8 +185,8 @@ def main() -> None:
                         help="folder of chest X-rays with TB, such as TBX11K imgs/tb")
     parser.add_argument("--sick", type=Path, action="append", default=[],
                         help="folder of chest X-rays with lung disease other than TB, such as TBX11K imgs/sick")
-    parser.add_argument("--not-chest", type=Path, action="append", default=[],
-                        help="folder of images that are not chest X-rays")
+    parser.add_argument("--not-chest", "--reject", dest="not_chest", type=Path, action="append", default=[],
+                        help="folder of images that should be rejected, such as photos")
     parser.add_argument("--side-view", type=Path, action="append", default=[],
                         help="folder of side-view (lateral) chest X-rays")
     parser.add_argument("--url", default="http://localhost:8000")

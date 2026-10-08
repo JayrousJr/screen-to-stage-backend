@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     image_dir: Path = Path("./data/images")
     inference_timeout_seconds: float = 300.0
     max_colour_spread: float = 30.0
+    body_parts: list[str] = ["chest", "bone_joint", "abdomen", "dental_head"]
+    locate_findings: bool = True
+    compare_with_previous: bool = True
 
 
 settings = Settings()

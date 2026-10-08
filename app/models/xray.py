@@ -17,54 +17,47 @@ class AnalyzeResponse(BaseModel):
     status: ScanStatus
 
 
+BodyPartName = Literal["chest", "bone_joint", "abdomen", "dental_head"]
+Change = Literal["better", "same", "worse", "new_finding", "unclear"]
+
+
 class ImageCheck(BaseModel):
-    is_chest_xray: bool
+    is_xray: bool
+    body_part: Literal["chest", "bone_joint", "abdomen", "dental_head", "other"]
     is_frontal: bool
 
 
-CONDITIONS = {
-    "consolidation": "Consolidation or pneumonia",
-    "tb_signs": "Possible TB signs",
-    "pleural_effusion": "Fluid around the lung (pleural effusion)",
-    "pneumothorax": "Air around the lung (pneumothorax)",
-    "cardiomegaly": "Enlarged heart (cardiomegaly)",
-    "vascular_congestion": "Congested lung vessels",
-    "nodule_or_mass": "Nodule or mass",
-    "bone_abnormality": "Rib or bone abnormality",
-    "spine_curvature": "Curved spine",
-    "device_misplaced": "Tube, line or device out of position",
-    "other_abnormality": "Other abnormality",
-}
+class ModelBox(BaseModel):
+    label: str
+    box: list[float]
 
 
-class ChestChecklist(BaseModel):
-    consolidation: bool
-    tb_signs: bool
-    pleural_effusion: bool
-    pneumothorax: bool
-    cardiomegaly: bool
-    vascular_congestion: bool
-    nodule_or_mass: bool
-    bone_abnormality: bool
-    spine_curvature: bool
-    device_misplaced: bool
-    other_abnormality: bool
+class Box(BaseModel):
+    label: str
+    box: list[int]
 
 
-class ModelFindings(BaseModel):
-    checklist: ChestChecklist
+class Reading(BaseModel):
+    body_part: BodyPartName
+    conditions: list[str]
     findings: list[str]
     flagged_regions: list[str]
     devices: list[str]
+    boxes: list[Box] = []
     confidence: Confidence
-
-    @property
-    def conditions(self) -> list[str]:
-        return [label for name, label in CONDITIONS.items() if getattr(self.checklist, name)]
 
     @property
     def requires_review(self) -> bool:
         return bool(self.conditions) or self.confidence != "high"
+
+
+class ModelComparison(BaseModel):
+    change: Change
+    summary: str
+
+
+class Comparison(ModelComparison):
+    previous_scan_id: str
 
 
 class ResultResponse(BaseModel):
@@ -72,12 +65,31 @@ class ResultResponse(BaseModel):
     facility_id: str
     patient_ref: str
     status: ScanStatus
+    body_part: BodyPartName | None = None
     conditions: list[str] = []
     findings: list[str] = []
     flagged_regions: list[str] = []
     devices: list[str] = []
+    boxes: list[Box] = []
+    comparison: Comparison | None = None
     confidence: Confidence | None = None
     requires_review: bool = True
     synced_to_dhis2: bool = False
     error: str | None = None
     message: str | None = None
+
+
+class BatchRequest(BaseModel):
+    scans: list[AnalyzeRequest] = Field(min_length=1, max_length=20)
+
+
+class BatchItem(BaseModel):
+    index: int
+    scan_id: str | None = None
+    status: ScanStatus | None = None
+    error: str | None = None
+    message: str | None = None
+
+
+class BatchResponse(BaseModel):
+    scans: list[BatchItem]
