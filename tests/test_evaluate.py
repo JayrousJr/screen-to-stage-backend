@@ -56,14 +56,32 @@ def test_images_are_run_through_the_api(client, db, tmp_path, xray_image, monkey
     (folder / "notes.txt").write_text("not an image")
     (folder / "masks").mkdir()
     (folder / "masks" / "CHNCXR_0001_0.png").write_bytes(base64.b64decode(xray_image))
-    readings = iter([CLEAR, TB])
+    args = argparse.Namespace(labelled=[folder], normal=[], tb=[], sick=[], not_chest=[], side_view=[], sample=None)
+    found = evaluate.cases(args)
+    readings = iter(TB if expected == "tb" else CLEAR for _, _, expected in found)
     monkeypatch.setattr(inference, "analyze", lambda path: next(readings))
     monkeypatch.setattr(evaluate.time, "sleep", lambda seconds: worker.process_next(db))
 
-    args = argparse.Namespace(labelled=[folder], not_chest=[], side_view=[])
-    results = [(expected, evaluate.run_one(client, path, 0)) for _, path, expected in evaluate.cases(args)]
+    results = {path.name: evaluate.run_one(client, path, 0) for _, path, _ in found}
 
-    assert [(expected, r["outcome"], r["requires_review"]) for expected, r in results] == [
-        ("normal", "read", False),
-        ("tb", "read", True),
-    ]
+    assert {name: (r["outcome"], r["requires_review"]) for name, r in results.items()} == {
+        "CHNCXR_0001_0.png": ("read", False),
+        "CHNCXR_0002_1.png": ("read", True),
+    }
+
+
+def test_folders_give_the_answer_and_sample_is_balanced(tmp_path):
+    for name, count in (("health", 30), ("tb", 10), ("sick", 30)):
+        (tmp_path / name).mkdir()
+        for number in range(count):
+            (tmp_path / name / f"{name}{number:04}.png").write_bytes(b"png")
+    args = argparse.Namespace(
+        labelled=[], normal=[tmp_path / "health"], tb=[tmp_path / "tb"], sick=[tmp_path / "sick"],
+        not_chest=[], side_view=[], sample=10,
+    )
+
+    found = evaluate.cases(args)
+
+    assert sorted(expected for _, _, expected in found) == ["normal"] * 10 + ["sick"] * 10 + ["tb"] * 10
+    assert all(path.parent.name == {"normal": "health", "tb": "tb", "sick": "sick"}[expected] for _, path, expected in found)
+    assert found == evaluate.cases(args)
