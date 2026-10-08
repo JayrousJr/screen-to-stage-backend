@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS results (
     scan_id TEXT PRIMARY KEY REFERENCES scans (id),
     findings TEXT NOT NULL,
     flagged_regions TEXT NOT NULL,
+    conditions TEXT NOT NULL DEFAULT '[]',
+    devices TEXT NOT NULL DEFAULT '[]',
     confidence TEXT NOT NULL CHECK (confidence IN ('low', 'medium', 'high')),
     requires_review INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))

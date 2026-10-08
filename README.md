@@ -79,9 +79,13 @@ The status moves `pending` → `processing` → `complete`. Repeat the call unti
 ```json
 {
   "scan_id": "a65f5d6e17984e009776609eac249b4f",
+  "facility_id": "FAC-001",
+  "patient_ref": "P-001",
   "status": "complete",
-  "findings": ["There are increased interstitial markings in the right upper lobe."],
+  "conditions": ["Possible TB signs"],
+  "findings": ["There is a patchy opacity in the right upper zone.", "The heart size is normal."],
   "flagged_regions": ["right upper zone"],
+  "devices": [],
   "confidence": "high",
   "requires_review": true,
   "synced_to_dhis2": false,
@@ -90,7 +94,9 @@ The status moves `pending` → `processing` → `complete`. Repeat the call unti
 }
 ```
 
-`requires_review` is `true` whenever the reading is abnormal or the confidence is not high.
+The model goes through a checklist of chest conditions: pneumonia, signs of TB, fluid or air around the lung, an enlarged heart, congested lung vessels, nodules or masses, rib or bone problems, a curved spine, and tubes or devices out of place. `conditions` lists the ones it found, in plain words. `devices` lists any tubes, lines or devices it saw.
+
+`requires_review` is `true` whenever any condition is found or the confidence is not high.
 
 ### 4. Failure cases
 

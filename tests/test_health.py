@@ -1,5 +1,7 @@
 import sqlite3
 
+from app.db.database import init_db
+
 from app.config import settings
 from app.services import inference
 
@@ -37,6 +39,26 @@ def test_health_degraded_when_ollama_unreachable(client, monkeypatch):
     assert body["status"] == "degraded"
     assert body["ollama_reachable"] is False
     assert body["model_available"] is False
+
+
+def test_older_database_gets_new_columns(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "database_path", tmp_path / "old.db")
+    monkeypatch.setattr(settings, "image_dir", tmp_path / "images")
+    conn = sqlite3.connect(settings.database_path)
+    conn.execute(
+        "CREATE TABLE results (scan_id TEXT PRIMARY KEY, findings TEXT NOT NULL, flagged_regions TEXT NOT NULL,"
+        " confidence TEXT NOT NULL, requires_review INTEGER NOT NULL)"
+    )
+    conn.execute("INSERT INTO results VALUES ('old', '[]', '[]', 'high', 0)")
+    conn.commit()
+    conn.close()
+
+    init_db()
+
+    conn = sqlite3.connect(settings.database_path)
+    row = conn.execute("SELECT conditions, devices FROM results WHERE scan_id = 'old'").fetchone()
+    conn.close()
+    assert row == ("[]", "[]")
 
 
 def test_startup_creates_schema(client):

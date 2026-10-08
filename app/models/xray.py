@@ -22,22 +22,60 @@ class ImageCheck(BaseModel):
     is_frontal: bool
 
 
+CONDITIONS = {
+    "consolidation": "Consolidation or pneumonia",
+    "tb_signs": "Possible TB signs",
+    "pleural_effusion": "Fluid around the lung (pleural effusion)",
+    "pneumothorax": "Air around the lung (pneumothorax)",
+    "cardiomegaly": "Enlarged heart (cardiomegaly)",
+    "vascular_congestion": "Congested lung vessels",
+    "nodule_or_mass": "Nodule or mass",
+    "bone_abnormality": "Rib or bone abnormality",
+    "spine_curvature": "Curved spine",
+    "device_misplaced": "Tube, line or device out of position",
+    "other_abnormality": "Other abnormality",
+}
+
+
+class ChestChecklist(BaseModel):
+    consolidation: bool
+    tb_signs: bool
+    pleural_effusion: bool
+    pneumothorax: bool
+    cardiomegaly: bool
+    vascular_congestion: bool
+    nodule_or_mass: bool
+    bone_abnormality: bool
+    spine_curvature: bool
+    device_misplaced: bool
+    other_abnormality: bool
+
+
 class ModelFindings(BaseModel):
+    checklist: ChestChecklist
     findings: list[str]
     flagged_regions: list[str]
-    abnormal: bool
+    devices: list[str]
     confidence: Confidence
 
     @property
+    def conditions(self) -> list[str]:
+        return [label for name, label in CONDITIONS.items() if getattr(self.checklist, name)]
+
+    @property
     def requires_review(self) -> bool:
-        return self.abnormal or self.confidence != "high"
+        return bool(self.conditions) or self.confidence != "high"
 
 
 class ResultResponse(BaseModel):
     scan_id: str
+    facility_id: str
+    patient_ref: str
     status: ScanStatus
+    conditions: list[str] = []
     findings: list[str] = []
     flagged_regions: list[str] = []
+    devices: list[str] = []
     confidence: Confidence | None = None
     requires_review: bool = True
     synced_to_dhis2: bool = False

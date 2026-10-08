@@ -10,15 +10,17 @@ from pydicom.uid import ExplicitVRLittleEndian, JPEG2000Lossless, generate_uid
 
 from app.models.xray import ImageCheck, ModelFindings
 from app.services import images, inference, worker
+from tests.readings import reading
 
-NORMAL = ModelFindings(findings=["Clear lung fields"], flagged_regions=[], abnormal=False, confidence="high")
-ABNORMAL = ModelFindings(
-    findings=["Opacity in the right upper zone"],
-    flagged_regions=["right upper zone"],
-    abnormal=True,
-    confidence="high",
+NORMAL = reading()
+ABNORMAL = reading(
+    "tb_signs",
+    "pleural_effusion",
+    findings=["Opacity in the right upper zone", "Blunted left costophrenic angle"],
+    regions=["right upper zone"],
+    devices=["central venous line"],
 )
-UNSURE = ModelFindings(findings=["Clear lung fields"], flagged_regions=[], abnormal=False, confidence="low")
+UNSURE = reading(confidence="low")
 
 
 def dicom(pixels, photometric="MONOCHROME2", view="PA", transfer_syntax=ExplicitVRLittleEndian, **extra):
@@ -69,9 +71,13 @@ def test_submit_returns_pending_scan(client, submit):
     assert response.json()["status"] == "pending"
     assert client.get(f"/api/xray/results/{scan_id}").json() == {
         "scan_id": scan_id,
+        "facility_id": "FAC-001",
+        "patient_ref": "P-001",
         "status": "pending",
+        "conditions": [],
         "findings": [],
         "flagged_regions": [],
+        "devices": [],
         "confidence": None,
         "requires_review": True,
         "synced_to_dhis2": False,
@@ -88,8 +94,11 @@ def test_completed_scan_returns_findings(client, db, submit, monkeypatch):
 
     body = client.get(f"/api/xray/results/{scan_id}").json()
     assert body["status"] == "complete"
-    assert body["findings"] == ["Opacity in the right upper zone"]
+    assert (body["facility_id"], body["patient_ref"]) == ("FAC-001", "P-001")
+    assert body["conditions"] == ["Possible TB signs", "Fluid around the lung (pleural effusion)"]
+    assert body["findings"] == ["Opacity in the right upper zone", "Blunted left costophrenic angle"]
     assert body["flagged_regions"] == ["right upper zone"]
+    assert body["devices"] == ["central venous line"]
     assert body["confidence"] == "high"
     assert body["requires_review"] is True
     assert body["synced_to_dhis2"] is False
@@ -97,7 +106,14 @@ def test_completed_scan_returns_findings(client, db, submit, monkeypatch):
 
 @pytest.mark.parametrize(
     ("output", "requires_review"),
-    [(NORMAL, False), (ABNORMAL, True), (UNSURE, True)],
+    [
+        (NORMAL, False),
+        (ABNORMAL, True),
+        (UNSURE, True),
+        (reading("other_abnormality"), True),
+        (reading(devices=["pacemaker"]), False),
+        (reading("device_misplaced", devices=["endotracheal tube"]), True),
+    ],
 )
 def test_requires_review(client, db, submit, monkeypatch, output, requires_review):
     analyze_returns(monkeypatch, output)
@@ -223,6 +239,13 @@ def test_model_is_asked_whether_image_is_chest_xray(tmp_path, monkeypatch):
     with pytest.raises(inference.NotChestXray):
         inference.analyze(image_path)
     assert asked == [ImageCheck]
+
+
+def test_schema_sent_to_model_has_no_references():
+    schema = inference.inline_schema(ModelFindings)
+
+    assert "$ref" not in str(schema) and "$defs" not in schema
+    assert set(schema["properties"]["checklist"]["properties"]) >= {"tb_signs", "pneumothorax"}
 
 
 def test_chest_xray_is_read_after_check(tmp_path, monkeypatch):

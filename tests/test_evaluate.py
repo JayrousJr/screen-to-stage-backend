@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from app.models.xray import ModelFindings
 from app.services import inference, worker
 from scripts import evaluate
+from tests.readings import reading
 
-TB = ModelFindings(findings=["Cavity"], flagged_regions=["right upper zone"], abnormal=True, confidence="high")
-CLEAR = ModelFindings(findings=["Clear lung fields"], flagged_regions=[], abnormal=False, confidence="high")
+TB = reading("tb_signs", findings=["Cavity"], regions=["right upper zone"])
+CLEAR = reading()
 
 
 @pytest.mark.parametrize(

@@ -5,6 +5,9 @@ from pathlib import Path
 from app.config import settings
 
 SCHEMA = Path(__file__).with_name("schema.sql")
+ADDED_COLUMNS = {
+    "results": {"conditions": "TEXT NOT NULL DEFAULT '[]'", "devices": "TEXT NOT NULL DEFAULT '[]'"},
+}
 
 
 def connect() -> sqlite3.Connection:
@@ -22,6 +25,11 @@ def init_db() -> None:
     conn = connect()
     try:
         conn.executescript(SCHEMA.read_text())
+        for table, columns in ADDED_COLUMNS.items():
+            existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+            for name, definition in columns.items():
+                if name not in existing:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
     finally:
         conn.close()
 

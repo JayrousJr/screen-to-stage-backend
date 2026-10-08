@@ -60,12 +60,15 @@ def process_next(conn: sqlite3.Connection) -> bool:
 
     with conn:
         conn.execute(
-            "INSERT INTO results (scan_id, findings, flagged_regions, confidence, requires_review)"
-            " VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO results"
+            " (scan_id, findings, flagged_regions, conditions, devices, confidence, requires_review)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 scan_id,
                 json.dumps(output.findings),
                 json.dumps(output.flagged_regions),
+                json.dumps(output.conditions),
+                json.dumps(output.devices),
                 output.confidence,
                 output.requires_review,
             ),

@@ -35,7 +35,8 @@ def analyze(request: AnalyzeRequest, db: sqlite3.Connection = Depends(get_db)) -
 @router.get("/results/{scan_id}", response_model=ResultResponse)
 def result(scan_id: str, db: sqlite3.Connection = Depends(get_db)) -> ResultResponse:
     row = db.execute(
-        "SELECT s.status, s.error, r.findings, r.flagged_regions, r.confidence,"
+        "SELECT s.facility_id, s.patient_ref, s.status, s.error,"
+        " r.findings, r.flagged_regions, r.conditions, r.devices, r.confidence,"
         " r.requires_review, q.status AS sync_status"
         " FROM scans s"
         " LEFT JOIN results r ON r.scan_id = s.id"
@@ -47,19 +48,22 @@ def result(scan_id: str, db: sqlite3.Connection = Depends(get_db)) -> ResultResp
         raise ApiError(404, "scan_not_found")
     if row["error"] == "inference_timeout":
         raise ApiError(504, "inference_timeout")
+    scan = {"scan_id": scan_id, "facility_id": row["facility_id"], "patient_ref": row["patient_ref"]}
     if row["status"] != "complete":
         return ResultResponse(
-            scan_id=scan_id,
+            **scan,
             status=row["status"],
             error=row["error"],
             message=MESSAGES.get(row["error"]),
         )
 
     return ResultResponse(
-        scan_id=scan_id,
+        **scan,
         status="complete",
+        conditions=json.loads(row["conditions"]),
         findings=json.loads(row["findings"]),
         flagged_regions=json.loads(row["flagged_regions"]),
+        devices=json.loads(row["devices"]),
         confidence=row["confidence"],
         requires_review=bool(row["requires_review"]),
         synced_to_dhis2=row["sync_status"] == "synced",
